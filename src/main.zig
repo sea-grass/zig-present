@@ -1,4 +1,9 @@
 const std = @import("std");
+const USAGE =
+    \\Usage: zig-present [--no-clear] <presentation.txt>
+;
+
+var no_clear: bool = false;
 
 const CommandType = enum {
     clearScreen,
@@ -39,11 +44,13 @@ const Command = union(CommandType) {
         }
 
         pub fn clearScreen(allocator: std.mem.Allocator, writer: anytype) !void {
-            _ = try writer.write("\x1b[2J");
-            var child_proc = std.ChildProcess.init(&.{ "tput", "cup", "0", "0" }, allocator);
-            try child_proc.spawn();
+            if (!no_clear) {
+                _ = try writer.write("\x1b[2J");
+                var child_proc = std.ChildProcess.init(&.{ "tput", "cup", "0", "0" }, allocator);
+                try child_proc.spawn();
 
-            _ = try child_proc.wait();
+                _ = try child_proc.wait();
+            }
         }
 
         pub fn goToNextSlide(allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
@@ -93,10 +100,20 @@ pub fn main() !void {
 
         // skip exe name
         _ = it.next();
-        if (it.next()) |v| value = v;
+        value = it.next();
+
+        if (value == null or std.mem.eql(u8, value.?, "-h") or std.mem.eql(u8, value.?, "--help")) {
+            std.log.info("{s}", .{USAGE});
+            std.process.exit(1);
+        }
+
+        if (std.mem.eql(u8, value.?, "--no-clear")) {
+            no_clear = true;
+            value = it.next();
+        }
 
         if (it.next() != null or value == null) {
-            std.log.info("Usage: zig-present <presentation.txt>", .{});
+            std.log.info("{s}", .{USAGE});
             std.process.exit(1);
         }
 
