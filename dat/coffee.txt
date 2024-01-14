@@ -1,0 +1,38 @@
+!zig-present
+# Coffee Brewing
+How to brew coffee with a french press
+
+/next_slide
+# What you'll need:
+
+- French press
+- Ground coffee beans
+- Boiling water
+
+/next_slide
+# Steps
+
+1. Add ground coffee beans to the french press
+2. Add 1 cup of boiling water to the french press, per 7g of coffee beans
+3. Cover the french press with the lid
+4. Wait 8 minutes
+5. Push the plunger down slowly
+6. Pour and enjoy
+
+Hit enter to follow this process step-by-step.
+
+/next_slide
+# Steps
+
+1. Add ground coffee beans to the french press
+/pause
+2. Add 1 cup of boiling water to the french press, per 7g of coffee beans
+/pause
+3. Cover the french press with the lid
+/pause
+4. Wait 8 minutes
+/pause
+5. Push the plunger down slowly
+/pause
+6. Pour and enjoy
+

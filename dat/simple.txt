@@ -1,0 +1,14 @@
+!zig-present
+/stdout date
+Hello, world
+/pause
+This is a sample presentation.
+/next_slide
+Slide two
+Press enter for an interactive shell inside a docker image.
+/pause
+/docker run -it --rm mysql:latest sh
+/next_slide
+Slide three
+Lorem ipsum dolor sit amet
+/stdout echo hello world
