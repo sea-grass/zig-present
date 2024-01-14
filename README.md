@@ -1,6 +1,6 @@
 # zig-present
 
-`zig-present` is a command-line tool for creative interactive TUI presentations.
+`zig-present` is a command-line tool for creating interactive TUI presentations.
 
 Presentations are expressed in a simple text format. Here's an example presentation:
 
