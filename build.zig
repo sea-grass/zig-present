@@ -14,6 +14,19 @@ pub fn build(b: *std.Build) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
+
+    const options = b.addOptions();
+
+    const option1 = b.option(
+        usize,
+        "option1",
+        "The first option of the available few.",
+    ) orelse 1;
+    options.addOption(usize, "option1", option1);
+
+    const app_options_module = options.createModule();
+    _ = app_options_module;
+
     {
         const exe = b.addExecutable(.{
             .name = "zig-present",
@@ -23,6 +36,8 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
+
+        exe.addOptions("app_options", options);
 
         // This declares intent for the executable to be installed into the
         // standard location when the user invokes the "install" step (the default
@@ -56,8 +71,12 @@ pub fn build(b: *std.Build) void {
     {
         const dist_step = b.step("dist", "cross-compile the app for distribution");
 
-        {
-            const cross_target = "aarch64-linux";
+        const cross_targets = .{
+            "aarch64-linux",
+            "aarch64-macos",
+            "x86_64-linux",
+        };
+        inline for (cross_targets) |cross_target| {
             const x = b.addExecutable(.{
                 .name = "zig-present-" ++ cross_target,
                 .root_source_file = .{ .path = "src/main.zig" },
@@ -67,35 +86,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
             });
 
-            b.installArtifact(x);
-            dist_step.dependOn(&x.step);
-        }
-
-        {
-            const cross_target = "aarch64-macos";
-            const x = b.addExecutable(.{
-                .name = "zig-present-" ++ cross_target,
-                .root_source_file = .{ .path = "src/main.zig" },
-                .target = std.zig.CrossTarget.parse(.{
-                    .arch_os_abi = cross_target,
-                }) catch @panic("cannot parse target"),
-                .optimize = optimize,
-            });
-
-            b.installArtifact(x);
-            dist_step.dependOn(&x.step);
-        }
-
-        {
-            const cross_target = "x86_64-linux";
-            const x = b.addExecutable(.{
-                .name = "zig-present-" ++ cross_target,
-                .root_source_file = .{ .path = "src/main.zig" },
-                .target = std.zig.CrossTarget.parse(.{
-                    .arch_os_abi = cross_target,
-                }) catch @panic("cannot parse target"),
-                .optimize = optimize,
-            });
+            x.addOptions("app_options", options);
 
             b.installArtifact(x);
             dist_step.dependOn(&x.step);
@@ -110,6 +101,8 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
+
+        unit_tests.addOptions("app_options", options);
 
         const run_unit_tests = b.addRunArtifact(unit_tests);
 

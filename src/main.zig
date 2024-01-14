@@ -1,4 +1,6 @@
 const std = @import("std");
+const app_options = @import("app_options");
+
 const USAGE =
     \\Usage: zig-present [--no-clear] <presentation.txt>
 ;
@@ -80,6 +82,7 @@ inline fn waitForEnter(reader: anytype) void {
     reader.skipUntilDelimiterOrEof('\n') catch {};
 }
 pub fn main() !void {
+    std.log.info("option1 {d}", .{app_options.option1});
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer switch (gpa.deinit()) {
         .ok => {},
@@ -89,13 +92,9 @@ pub fn main() !void {
     };
     const allocator = gpa.allocator();
 
-    var child_proc = std.ChildProcess.init(&.{ "zig", "build" }, allocator);
-    try child_proc.spawn();
-
-    _ = try child_proc.wait();
-
+    var it = try std.process.ArgIterator.initWithAllocator(allocator);
+    defer it.deinit();
     const file_path = blk: {
-        var it = std.process.args();
         var value: ?[]const u8 = null;
 
         // skip exe name
