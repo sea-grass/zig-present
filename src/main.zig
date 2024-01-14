@@ -1,5 +1,4 @@
 const std = @import("std");
-const app_options = @import("app_options");
 
 const USAGE =
     \\Usage: zig-present [--no-clear] <presentation.txt>
@@ -82,7 +81,6 @@ inline fn waitForEnter(reader: anytype) void {
     reader.skipUntilDelimiterOrEof('\n') catch {};
 }
 pub fn main() !void {
-    std.log.info("option1 {d}", .{app_options.option1});
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer switch (gpa.deinit()) {
         .ok => {},

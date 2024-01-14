@@ -15,18 +15,6 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const options = b.addOptions();
-
-    const option1 = b.option(
-        usize,
-        "option1",
-        "The first option of the available few.",
-    ) orelse 1;
-    options.addOption(usize, "option1", option1);
-
-    const app_options_module = options.createModule();
-    _ = app_options_module;
-
     {
         const exe = b.addExecutable(.{
             .name = "zig-present",
@@ -36,8 +24,6 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-
-        exe.addOptions("app_options", options);
 
         // This declares intent for the executable to be installed into the
         // standard location when the user invokes the "install" step (the default
@@ -86,8 +72,6 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
             });
 
-            x.addOptions("app_options", options);
-
             b.installArtifact(x);
             dist_step.dependOn(&x.step);
         }
@@ -101,8 +85,6 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-
-        unit_tests.addOptions("app_options", options);
 
         const run_unit_tests = b.addRunArtifact(unit_tests);
 
