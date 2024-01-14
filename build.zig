@@ -85,6 +85,21 @@ pub fn build(b: *std.Build) void {
             b.installArtifact(x);
             dist_step.dependOn(&x.step);
         }
+
+        {
+            const cross_target = "x86_64-linux";
+            const x = b.addExecutable(.{
+                .name = "zig-present-" ++ cross_target,
+                .root_source_file = .{ .path = "src/main.zig" },
+                .target = std.zig.CrossTarget.parse(.{
+                    .arch_os_abi = cross_target,
+                }) catch @panic("cannot parse target"),
+                .optimize = optimize,
+            });
+
+            b.installArtifact(x);
+            dist_step.dependOn(&x.step);
+        }
     }
 
     {
