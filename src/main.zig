@@ -18,7 +18,20 @@ const required_mem_by_tput = 4096;
 const helpful = false;
 
 const USAGE =
-    \\Usage: zig-present [--no-clear] <presentation.txt>
+    \\NAME
+    \\  zig-present - Interactive terminal presentations
+    \\
+    \\SYNOPSIS
+    \\  zig-present [OPTION] [FILE]
+    \\
+    \\DESCRIPTION
+    \\  Parse the presentation from the FILE and begin an interactive session.
+    \\
+    \\  -h, --help
+    \\      Print this help message.
+    \\
+    \\  --no-clear
+    \\      Do not clear the screen contents between slides.
 ;
 
 const Args = struct {
@@ -36,13 +49,13 @@ const Args = struct {
         _ = it.next();
 
         var token: []const u8 = it.next() orelse {
-            std.log.info("{s}", .{USAGE});
+            debug.print("{s}\n", .{USAGE});
             std.process.exit(1);
         };
 
         inline for (help) |h| {
             if (std.mem.eql(u8, token, h)) {
-                std.log.info("{s}", .{USAGE});
+                debug.print("{s}\n", .{USAGE});
                 std.process.exit(0);
             }
         }
@@ -51,14 +64,14 @@ const Args = struct {
             args.no_clear = true;
 
             token = it.next() orelse {
-                std.log.info("{s}", .{USAGE});
+                debug.print("{s}\n", .{USAGE});
                 std.process.exit(1);
             };
         }
 
         // Ensure there are no extraneous arguments
         if (it.next() != null) {
-            std.log.info("{s}", .{USAGE});
+            debug.print("{s}\n", .{USAGE});
             std.process.exit(1);
         }
 
@@ -171,7 +184,7 @@ pub fn main() !void {
     defer switch (gpa.deinit()) {
         .ok => {},
         else => {
-            std.log.info("Oops! A memory leak...", .{});
+            debug.print("Oops! A memory leak...", .{});
         },
     };
     const allocator = gpa.allocator();
@@ -181,7 +194,7 @@ pub fn main() !void {
 
     const args = try Args.parse(&it);
 
-    std.log.info("file_path=({s})", .{args.file_path});
+    debug.print("file_path=({s})\n", .{args.file_path});
 
     // All memory allocated with this arena will live until the presentation
     // has completed.
@@ -193,7 +206,7 @@ pub fn main() !void {
     var commands = std.ArrayList(Command).init(arena);
 
     try commands.append(.{ .goToNextSlide = .{ .prompt = "" } });
-    if (helpful) std.log.info("Press enter to begin.", .{});
+    if (helpful) debug.print("Press enter to begin.\n", .{});
 
     {
         const cwd = std.fs.cwd();
@@ -231,7 +244,7 @@ pub fn main() !void {
         switch (cmd) {
             .goToNextSlide => {
                 slide_no += 1;
-                std.log.info("Slide {d}/{d}", .{ slide_no, total_slides });
+                debug.print("Slide {d}/{d}\n", .{ slide_no, total_slides });
             },
             else => {},
         }
@@ -239,7 +252,7 @@ pub fn main() !void {
         if (helpful and index + 1 < commands.items.len - 1) {
             switch (commands.items[index + 1]) {
                 .goToNextSlide => {
-                    std.log.info("Press enter for next slide.", .{});
+                    debug.print("Press enter for next slide.\n", .{});
                 },
                 else => {},
             }
@@ -251,7 +264,7 @@ fn readCommandsFromFile(arena: mem.Allocator, file: *fs.File, list: *std.ArrayLi
     var buf: [dumb_max_line_size]u8 = undefined;
 
     if (!mem.eql(u8, try file.reader().readUntilDelimiter(&buf, '\n'), "!zig-present")) {
-        debug.print("Malformed present file. First line must be exactly '!zig-present' (without the quotes).", .{});
+        debug.print("Malformed present file. First line must be exactly '!zig-present' (without the quotes).\n", .{});
         process.exit(1);
     }
 
