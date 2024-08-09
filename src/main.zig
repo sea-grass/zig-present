@@ -11,6 +11,7 @@ const process = std.process;
 const dumb_max_line_size = 256;
 // It's "dumb" because I haven't spent much thought on whether it's a good number or not.
 const dumb_max_file_lines = 1024;
+const required_mem_by_tput = 4096;
 
 // When enabled, prints some helpful tips during the presentation.
 // e.g. "Press enter for next slide."
@@ -23,7 +24,6 @@ const USAGE =
 var no_clear: bool = false;
 
 const CommandType = enum {
-    clearScreen,
     printText,
     waitForEnter,
     goToNextSlide,
@@ -32,7 +32,6 @@ const CommandType = enum {
 };
 
 const Command = union(CommandType) {
-    clearScreen: void,
     printText: struct {
         text: []const u8,
     },
@@ -49,48 +48,66 @@ const Command = union(CommandType) {
         cmd: []const u8,
     },
 
-    pub fn run(self: Command, allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
+    pub fn parseLeaky(arena: mem.Allocator, line: []const u8) !?Command {
+        if (mem.startsWith(u8, line, "/stdout")) {
+            return .{ .runShell = .{ .cmd = try arena.dupe(u8, line["/stdout".len..]) } };
+        }
+
+        if (mem.startsWith(u8, line, "/next_slide")) return .{
+            .goToNextSlide = .{
+                .prompt = try arena.dupe(u8, mem.trim(u8, line["/next_slide".len..], " ")),
+            },
+        };
+
+        if (mem.startsWith(u8, line, "/pause")) return .{
+            .waitForEnter = .{
+                .prompt = try arena.dupe(u8, mem.trim(u8, line["/pause".len..], " ")),
+            },
+        };
+
+        if (mem.startsWith(u8, line, "/docker")) return .{
+            .runDocker = .{
+                .cmd = try arena.dupe(u8, line[1..]),
+            },
+        };
+
+        return null;
+    }
+
+    pub fn dispatch(self: Command, allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
         switch (self) {
-            .clearScreen => try clearScreen(allocator, writer),
+            .printText => |pt| try writer.print("{s}\n", .{pt.text}),
             .waitForEnter => |wfe| {
                 try writer.print("{s}", .{wfe.prompt});
                 waitForEnter(reader);
             },
-            .printText => |pt| try writer.print("{s}\n", .{pt.text}),
-            .goToNextSlide => |go| try goToNextSlide(allocator, reader, writer, go.prompt),
-            .runShell => |rs| try runShell(allocator, rs.cmd),
-            .runDocker => |rd| try runDocker(allocator, rd.cmd),
+            .goToNextSlide => |go| {
+                try writer.print("{s}", .{go.prompt});
+                waitForEnter(reader);
+                try clearScreen(writer);
+            },
+            .runShell => |rs| {
+                var p = process.Child.init(&.{ "sh", "-c", rs.cmd }, allocator);
+                _ = try p.spawnAndWait();
+            },
+            .runDocker => |rd| {
+                var p = process.Child.init(&.{ "sh", "-c", rd.cmd }, allocator);
+                _ = try p.spawnAndWait();
+            },
         }
     }
 
-    fn runDocker(allocator: std.mem.Allocator, docker_command: []const u8) !void {
-        var child_proc = process.Child.init(&.{ "sh", "-c", docker_command }, allocator);
-        _ = try child_proc.spawnAndWait();
-    }
-
-    fn runShell(allocator: std.mem.Allocator, shell_command: []const u8) !void {
-        var child_proc = process.Child.init(&.{ "sh", "-c", shell_command }, allocator);
-        _ = try child_proc.spawnAndWait();
-    }
-
-    fn clearScreen(allocator: std.mem.Allocator, writer: anytype) !void {
+    fn clearScreen(writer: anytype) !void {
         if (!no_clear) {
             _ = try writer.write("\x1b[2J");
-            var child_proc = process.Child.init(&.{ "tput", "cup", "0", "0" }, allocator);
+            var buf: [required_mem_by_tput]u8 = undefined;
+            var fba = heap.FixedBufferAllocator.init(&buf);
+            var child_proc = process.Child.init(&.{ "tput", "cup", "0", "0" }, fba.allocator());
             _ = try child_proc.spawnAndWait();
         }
     }
-
-    fn goToNextSlide(allocator: std.mem.Allocator, reader: anytype, writer: anytype, text: []const u8) !void {
-        try writer.print("{s}", .{text});
-        waitForEnter(reader);
-        try clearScreen(allocator, writer);
-    }
 };
 
-inline fn waitForEnter(reader: anytype) void {
-    reader.skipUntilDelimiterOrEof('\n') catch {};
-}
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer switch (gpa.deinit()) {
@@ -120,7 +137,7 @@ pub fn main() !void {
             value = it.next();
         }
 
-        if (it.next() != null or value == null) {
+        if (value == null or it.next() != null) {
             std.log.info("{s}", .{USAGE});
             std.process.exit(1);
         }
@@ -137,7 +154,9 @@ pub fn main() !void {
     const arena = presentation_arena.allocator();
 
     var commands = std.ArrayList(Command).init(arena);
+
     try commands.append(.{ .goToNextSlide = .{ .prompt = "" } });
+    if (helpful) std.log.info("Press enter to begin.", .{});
 
     {
         const cwd = std.fs.cwd();
@@ -164,10 +183,8 @@ pub fn main() !void {
 
     var slide_no: usize = 0;
 
-    if (helpful) std.log.info("Press enter to begin.", .{});
-
     for (commands.items, 0..) |cmd, index| {
-        try cmd.run(
+        try cmd.dispatch(
             allocator,
             std.io.getStdIn().reader(),
             std.io.getStdOut().writer(),
@@ -181,78 +198,44 @@ pub fn main() !void {
             else => {},
         }
 
-        if (helpful) {
-            if (index + 1 < commands.items.len - 1) {
-                switch (commands.items[index + 1]) {
-                    .goToNextSlide => {
-                        std.log.info("Press enter for next slide.", .{});
-                    },
-                    else => {},
-                }
+        if (helpful and index + 1 < commands.items.len - 1) {
+            switch (commands.items[index + 1]) {
+                .goToNextSlide => {
+                    std.log.info("Press enter for next slide.", .{});
+                },
+                else => {},
             }
         }
     }
 }
 
 fn readCommandsFromFile(arena: mem.Allocator, file: *fs.File, list: *std.ArrayList(Command)) !void {
-    var state: enum {
-        readPreamble,
-        readCommand,
-    } = .readPreamble;
-
     var buf: [dumb_max_line_size]u8 = undefined;
+
+    if (!mem.eql(u8, try file.reader().readUntilDelimiter(&buf, '\n'), "!zig-present")) {
+        debug.print("Malformed present file. First line must be exactly '!zig-present' (without the quotes).", .{});
+        process.exit(1);
+    }
+
     var num_iters: u64 = 0;
-    loop: while (num_iters < dumb_max_file_lines) : (num_iters += 1) {
+    defer debug.assert(num_iters < dumb_max_file_lines);
+
+    while (num_iters < dumb_max_file_lines) : (num_iters += 1) {
         const line = file.reader().readUntilDelimiter(&buf, '\n') catch |err| {
             switch (err) {
-                error.EndOfStream => {
-                    break :loop;
-                },
-                else => {
-                    return err;
-                },
+                error.EndOfStream => return,
+                else => return err,
             }
         };
 
-        switch (state) {
-            .readPreamble => {
-                if (!std.mem.eql(u8, line, "!zig-present")) {
-                    debug.print("Malformed present file. First line must be exactly '!zig-present' (without the quotes).", .{});
-                    process.exit(1);
-                }
-                state = .readCommand;
-            },
-            .readCommand => {
-                const stdout_prefix = "/stdout ";
-                try list.append(cmd: {
-                    if (line.len == 0) break :cmd .{ .printText = .{ .text = "" } };
-                    if (mem.startsWith(u8, line, stdout_prefix)) {
-                        debug.assert(line.len < stdout_prefix.len + 1);
-
-                        break :cmd .{ .runShell = .{ .cmd = try arena.dupe(u8, line[stdout_prefix.len..]) } };
-                    }
-
-                    if (mem.startsWith(u8, line, "/next_slide")) break :cmd .{
-                        .goToNextSlide = .{
-                            .prompt = try arena.dupe(u8, mem.trim(u8, line["/next_slide".len..], " ")),
-                        },
-                    };
-                    if (mem.startsWith(u8, line, "/pause")) break :cmd .{
-                        .waitForEnter = .{
-                            .prompt = try arena.dupe(u8, mem.trim(u8, line["/pause".len..], " ")),
-                        },
-                    };
-                    if (mem.startsWith(u8, line, "/docker")) break :cmd .{
-                        .runDocker = .{
-                            .cmd = try arena.dupe(u8, line[1..]),
-                        },
-                    };
-
-                    break :cmd .{ .printText = .{ .text = try arena.dupe(u8, line) } };
-                });
-            },
-        }
+        try list.append(cmd: {
+            if (line.len == 0) break :cmd .{ .printText = .{ .text = "" } };
+            if (try Command.parseLeaky(arena, line)) |parse_result| break :cmd parse_result;
+            break :cmd .{ .printText = .{ .text = try arena.dupe(u8, line) } };
+        });
     }
+}
 
-    debug.assert(num_iters < dumb_max_file_lines);
+inline fn waitForEnter(reader: anytype) void {
+    reader.skipUntilDelimiterOrEof('\n') catch {};
 }
