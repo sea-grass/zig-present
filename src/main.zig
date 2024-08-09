@@ -1,5 +1,20 @@
 const std = @import("std");
+const debug = std.debug;
+const fs = std.fs;
+const heap = std.heap;
+const mem = std.mem;
 const process = std.process;
+
+// This is used as the size of the buffer, in bytes,
+// when reading a present file.
+// It's "dumb" because I haven't spent much thought on whether it's a good number or not.
+const dumb_max_line_size = 256;
+// It's "dumb" because I haven't spent much thought on whether it's a good number or not.
+const dumb_max_file_lines = 1024;
+
+// When enabled, prints some helpful tips during the presentation.
+// e.g. "Press enter for next slide."
+const helpful = false;
 
 const USAGE =
     \\Usage: zig-present [--no-clear] <presentation.txt>
@@ -21,60 +36,55 @@ const Command = union(CommandType) {
     printText: struct {
         text: []const u8,
     },
-    waitForEnter: void,
-    goToNextSlide: void,
+    waitForEnter: struct {
+        prompt: []const u8,
+    },
+    goToNextSlide: struct {
+        prompt: []const u8,
+    },
     runDocker: struct {
-        docker_command: []const u8,
+        cmd: []const u8,
     },
     runShell: struct {
-        shell_command: []const u8,
+        cmd: []const u8,
     },
-
-    const Impl = struct {
-        pub fn runDocker(allocator: std.mem.Allocator, docker_command: []const u8) !void {
-            var child_proc = process.Child.init(&.{ "sh", "-c", docker_command }, allocator);
-            try child_proc.spawn();
-
-            _ = try child_proc.wait();
-        }
-
-        pub fn runShell(allocator: std.mem.Allocator, shell_command: []const u8) !void {
-            var child_proc = process.Child.init(&.{ "sh", "-c", shell_command }, allocator);
-            try child_proc.spawn();
-
-            _ = try child_proc.wait();
-        }
-
-        pub fn clearScreen(allocator: std.mem.Allocator, writer: anytype) !void {
-            if (!no_clear) {
-                _ = try writer.write("\x1b[2J");
-                var child_proc = process.Child.init(&.{ "tput", "cup", "0", "0" }, allocator);
-                try child_proc.spawn();
-
-                _ = try child_proc.wait();
-            }
-        }
-
-        pub fn goToNextSlide(allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
-            waitForEnter(reader);
-            try Impl.clearScreen(allocator, writer);
-        }
-    };
 
     pub fn run(self: Command, allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
         switch (self) {
-            .clearScreen => try Impl.clearScreen(allocator, writer),
-            .waitForEnter => waitForEnter(reader),
-            .printText => try writer.print("{s}\n", .{self.printText.text}),
-            .goToNextSlide => try Impl.goToNextSlide(allocator, reader, writer),
-            .runShell => try Impl.runShell(allocator, self.runShell.shell_command),
-            .runDocker => try Impl.runDocker(allocator, self.runDocker.docker_command),
+            .clearScreen => try clearScreen(allocator, writer),
+            .waitForEnter => |wfe| {
+                try writer.print("{s}", .{wfe.prompt});
+                waitForEnter(reader);
+            },
+            .printText => |pt| try writer.print("{s}\n", .{pt.text}),
+            .goToNextSlide => |go| try goToNextSlide(allocator, reader, writer, go.prompt),
+            .runShell => |rs| try runShell(allocator, rs.cmd),
+            .runDocker => |rd| try runDocker(allocator, rd.cmd),
         }
     }
 
-    pub fn deinit(self: Command, allocator: std.mem.Allocator) void {
-        _ = self;
-        _ = allocator;
+    fn runDocker(allocator: std.mem.Allocator, docker_command: []const u8) !void {
+        var child_proc = process.Child.init(&.{ "sh", "-c", docker_command }, allocator);
+        _ = try child_proc.spawnAndWait();
+    }
+
+    fn runShell(allocator: std.mem.Allocator, shell_command: []const u8) !void {
+        var child_proc = process.Child.init(&.{ "sh", "-c", shell_command }, allocator);
+        _ = try child_proc.spawnAndWait();
+    }
+
+    fn clearScreen(allocator: std.mem.Allocator, writer: anytype) !void {
+        if (!no_clear) {
+            _ = try writer.write("\x1b[2J");
+            var child_proc = process.Child.init(&.{ "tput", "cup", "0", "0" }, allocator);
+            _ = try child_proc.spawnAndWait();
+        }
+    }
+
+    fn goToNextSlide(allocator: std.mem.Allocator, reader: anytype, writer: anytype, text: []const u8) !void {
+        try writer.print("{s}", .{text});
+        waitForEnter(reader);
+        try clearScreen(allocator, writer);
     }
 };
 
@@ -119,78 +129,26 @@ pub fn main() !void {
         break :blk value.?;
     };
 
-    const cwd = std.fs.cwd();
-    const file = cwd.readFileAlloc(allocator, file_path, std.math.maxInt(usize)) catch |err| {
-        switch (err) {
-            error.FileNotFound => {
-                std.log.info("File not found.", .{});
-                std.process.exit(1);
-            },
-            else => {
-                std.log.info("Error reading file.", .{});
-                std.process.exit(1);
-            },
-        }
-    };
-    defer allocator.free(file);
+    // All memory allocated with this arena will live until the presentation
+    // has completed.
+    var presentation_arena = heap.ArenaAllocator.init(allocator);
+    defer presentation_arena.deinit();
 
-    var commands = std.ArrayList(Command).init(allocator);
-    defer {
-        while (commands.items.len > 0) {
-            commands.pop().deinit(allocator);
-        }
-        commands.deinit();
+    const arena = presentation_arena.allocator();
+
+    var commands = std.ArrayList(Command).init(arena);
+    try commands.append(.{ .goToNextSlide = .{ .prompt = "" } });
+
+    {
+        const cwd = std.fs.cwd();
+        var file = cwd.openFile(file_path, .{ .mode = .read_only }) catch |err| {
+            debug.print("Encountered an error when opening the present file: {any}\n", .{err});
+            process.exit(1);
+        };
+        defer file.close();
+        try readCommandsFromFile(arena, &file, &commands);
     }
 
-    var line_it = std.mem.splitScalar(u8, file, '\n');
-
-    try commands.append(.goToNextSlide);
-
-    var state: enum {
-        readPreamble,
-        readCommand,
-    } = .readPreamble;
-
-    while (line_it.next()) |line| {
-        switch (state) {
-            .readPreamble => {
-                if (!std.mem.eql(u8, line, "!zig-present")) {
-                    std.log.info("Malformed present file. First line must be exactly '!zig-present' (without the quotes).", .{});
-                    std.process.exit(1);
-                }
-                state = .readCommand;
-            },
-            .readCommand => {
-                const stdout_prefix = "/stdout ";
-                if (line.len == 0) {
-                    try commands.append(.{
-                        .printText = .{ .text = "" },
-                    });
-                } else if (std.mem.startsWith(u8, line, stdout_prefix)) {
-                    if (line.len < stdout_prefix.len + 1) @panic("Malformed command. Usage: /stdout <command>");
-                    const shell_command = line[stdout_prefix.len..];
-                    try commands.append(.{
-                        .runShell = .{ .shell_command = shell_command },
-                    });
-                } else if (std.mem.startsWith(u8, line, "/next_slide")) {
-                    try commands.append(.goToNextSlide);
-                } else if (std.mem.startsWith(u8, line, "/pause")) {
-                    try commands.append(.waitForEnter);
-                } else if (std.mem.startsWith(u8, line, "/docker")) {
-                    const docker_command = line[1..];
-                    try commands.append(.{
-                        .runDocker = .{ .docker_command = docker_command },
-                    });
-                } else {
-                    try commands.append(.{
-                        .printText = .{ .text = line },
-                    });
-                }
-            },
-        }
-    }
-
-    std.log.info("Press enter to begin.", .{});
     const total_slides = blk: {
         var count: usize = 0;
         for (commands.items) |cmd| {
@@ -203,13 +161,18 @@ pub fn main() !void {
         }
         break :blk count;
     };
+
     var slide_no: usize = 0;
+
+    if (helpful) std.log.info("Press enter to begin.", .{});
+
     for (commands.items, 0..) |cmd, index| {
         try cmd.run(
             allocator,
             std.io.getStdIn().reader(),
             std.io.getStdOut().writer(),
         );
+
         switch (cmd) {
             .goToNextSlide => {
                 slide_no += 1;
@@ -218,13 +181,78 @@ pub fn main() !void {
             else => {},
         }
 
-        if (index + 1 < commands.items.len - 1) {
-            switch (commands.items[index + 1]) {
-                .goToNextSlide => {
-                    std.log.info("Press enter for next slide.", .{});
-                },
-                else => {},
+        if (helpful) {
+            if (index + 1 < commands.items.len - 1) {
+                switch (commands.items[index + 1]) {
+                    .goToNextSlide => {
+                        std.log.info("Press enter for next slide.", .{});
+                    },
+                    else => {},
+                }
             }
         }
     }
+}
+
+fn readCommandsFromFile(arena: mem.Allocator, file: *fs.File, list: *std.ArrayList(Command)) !void {
+    var state: enum {
+        readPreamble,
+        readCommand,
+    } = .readPreamble;
+
+    var buf: [dumb_max_line_size]u8 = undefined;
+    var num_iters: u64 = 0;
+    loop: while (num_iters < dumb_max_file_lines) : (num_iters += 1) {
+        const line = file.reader().readUntilDelimiter(&buf, '\n') catch |err| {
+            switch (err) {
+                error.EndOfStream => {
+                    break :loop;
+                },
+                else => {
+                    return err;
+                },
+            }
+        };
+
+        switch (state) {
+            .readPreamble => {
+                if (!std.mem.eql(u8, line, "!zig-present")) {
+                    debug.print("Malformed present file. First line must be exactly '!zig-present' (without the quotes).", .{});
+                    process.exit(1);
+                }
+                state = .readCommand;
+            },
+            .readCommand => {
+                const stdout_prefix = "/stdout ";
+                try list.append(cmd: {
+                    if (line.len == 0) break :cmd .{ .printText = .{ .text = "" } };
+                    if (mem.startsWith(u8, line, stdout_prefix)) {
+                        debug.assert(line.len < stdout_prefix.len + 1);
+
+                        break :cmd .{ .runShell = .{ .cmd = try arena.dupe(u8, line[stdout_prefix.len..]) } };
+                    }
+
+                    if (mem.startsWith(u8, line, "/next_slide")) break :cmd .{
+                        .goToNextSlide = .{
+                            .prompt = try arena.dupe(u8, mem.trim(u8, line["/next_slide".len..], " ")),
+                        },
+                    };
+                    if (mem.startsWith(u8, line, "/pause")) break :cmd .{
+                        .waitForEnter = .{
+                            .prompt = try arena.dupe(u8, mem.trim(u8, line["/pause".len..], " ")),
+                        },
+                    };
+                    if (mem.startsWith(u8, line, "/docker")) break :cmd .{
+                        .runDocker = .{
+                            .cmd = try arena.dupe(u8, line[1..]),
+                        },
+                    };
+
+                    break :cmd .{ .printText = .{ .text = try arena.dupe(u8, line) } };
+                });
+            },
+        }
+    }
+
+    debug.assert(num_iters < dumb_max_file_lines);
 }

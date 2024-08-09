@@ -49,7 +49,6 @@ pub fn build(b: *std.Build) !void {
                 .optimize = optimize,
             });
 
-            b.installArtifact(x);
             dist_step.dependOn(&x.step);
         }
     }
