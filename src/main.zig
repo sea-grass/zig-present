@@ -1,4 +1,5 @@
 const std = @import("std");
+const process = std.process;
 
 const USAGE =
     \\Usage: zig-present [--no-clear] <presentation.txt>
@@ -31,14 +32,14 @@ const Command = union(CommandType) {
 
     const Impl = struct {
         pub fn runDocker(allocator: std.mem.Allocator, docker_command: []const u8) !void {
-            var child_proc = std.ChildProcess.init(&.{ "sh", "-c", docker_command }, allocator);
+            var child_proc = process.Child.init(&.{ "sh", "-c", docker_command }, allocator);
             try child_proc.spawn();
 
             _ = try child_proc.wait();
         }
 
         pub fn runShell(allocator: std.mem.Allocator, shell_command: []const u8) !void {
-            var child_proc = std.ChildProcess.init(&.{ "sh", "-c", shell_command }, allocator);
+            var child_proc = process.Child.init(&.{ "sh", "-c", shell_command }, allocator);
             try child_proc.spawn();
 
             _ = try child_proc.wait();
@@ -47,7 +48,7 @@ const Command = union(CommandType) {
         pub fn clearScreen(allocator: std.mem.Allocator, writer: anytype) !void {
             if (!no_clear) {
                 _ = try writer.write("\x1b[2J");
-                var child_proc = std.ChildProcess.init(&.{ "tput", "cup", "0", "0" }, allocator);
+                var child_proc = process.Child.init(&.{ "tput", "cup", "0", "0" }, allocator);
                 try child_proc.spawn();
 
                 _ = try child_proc.wait();
@@ -119,7 +120,7 @@ pub fn main() !void {
     };
 
     const cwd = std.fs.cwd();
-    var file = cwd.readFileAlloc(allocator, file_path, std.math.maxInt(usize)) catch |err| {
+    const file = cwd.readFileAlloc(allocator, file_path, std.math.maxInt(usize)) catch |err| {
         switch (err) {
             error.FileNotFound => {
                 std.log.info("File not found.", .{});
