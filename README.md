@@ -2,6 +2,12 @@
 
 `zig-present` is a command-line tool for creating interactive TUI presentations.
 
+<div style="max-width: 100%; margin: 0 auto; width: 800px;">
+
+![Demo video of running the zig-present software in a terminal session](./doc/demo.gif)
+
+</div>
+
 ## Example
 
 Presentations are expressed in a simple text format. Here's an example presentation:
